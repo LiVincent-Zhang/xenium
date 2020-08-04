@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -49,9 +49,8 @@ namespace xenium { namespace reclamation {
     struct thread_data;
     struct thread_control_block;
 
-    static std::atomic<unsigned> global_epoch;
-    static detail::thread_block_list<thread_control_block> global_thread_block_list;
-
+    inline static std::atomic<unsigned> global_epoch;
+    inline static detail::thread_block_list<thread_control_block> global_thread_block_list;
     static thread_data& local_thread_data();
 
     ALLOCATION_TRACKING_FUNCTIONS;
@@ -85,8 +84,8 @@ namespace xenium { namespace reclamation {
     using Deleter = typename T::Deleter;
   public:
     // Guard a marked ptr.
-    guard_ptr(const MarkedPtr& p = MarkedPtr()) noexcept;
-    explicit guard_ptr(const guard_ptr& p) noexcept;
+    explicit guard_ptr(const MarkedPtr& p = MarkedPtr()) noexcept;
+    guard_ptr(const guard_ptr& p) noexcept;
     guard_ptr(guard_ptr&& p) noexcept;
 
     guard_ptr& operator=(const guard_ptr& p) noexcept;

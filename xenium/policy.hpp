@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -84,5 +84,36 @@ struct container;
  */
 template <class T>
 struct hash;
+
+/**
+ * @brief Policy to configure the allocation strategy.
+ * 
+ * This policy is used by the following reclamation schemes:
+ *   * `xenium::reclamation::hazard_pointer`
+ * 
+ * @tparam T 
+ */
+template <class T>
+struct allocation_strategy;
+
+/**
+ * @brief Policy to configure the number of entries per allocated node in `ramalhete_queue`.
+ * @tparam Value
+ */
+template <unsigned Value>
+struct entries_per_node;
+
+/**
+ * @brief Policy to configure the number of padding bytes to add to each entry in
+ * `kirsch_kfifo_queue` and `kirsch_bounded_kfifo_queue` to reduce false sharing.
+ *
+ * Note that this number of bytes is a lower bound. Depending on the size of the
+ * queue's `value_type` the compiler may add some additional padding. The effective
+ * size of a queue entry is provided in `entry_size`.
+ *
+ * @tparam Value
+ */
+template <unsigned Value>
+struct padding_bytes;
 }}
 #endif

@@ -1,16 +1,46 @@
 # xenium
 
-[![Build Status](https://travis-ci.org/mpoeter/xenium.svg?branch=master)](https://travis-ci.org/mpoeter/xenium)
+[![Build Status](https://dev.azure.com/mpoeter/xenium/_apis/build/status/mpoeter.xenium?branchName=master)](https://dev.azure.com/mpoeter/xenium/_build?definitionId=1&branchName=master)
 [![MIT Licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Documentation](https://img.shields.io/badge/docs-doxygen-orange.svg)](https://mpoeter.github.io/xenium)
+[![Documentation](https://img.shields.io/badge/docs-doxygen-purple.svg)](https://mpoeter.github.io/xenium)
 
-xenium is a collection of concurrent data structures and memory reclamation algorithms.
-The data structures are parameterized so that they can be used with various reclamation
-schemes (similar to how the STL allows customization of allocators). The [documentation](https://mpoeter.github.io/xenium) provides more details.
+xenium is a header-only library that provides a collection of concurrent data structures
+and memory reclamation algorithms. The data structures are parameterized so that they can
+be used with various reclamation schemes (similar to how the STL allows customization of
+allocators).
 
-This project is based on the previous work in https://github.com/mpoeter/emr
+ * header only
+ * highly customizable
+ * no initialization code needed
+ * supports dynamic number of threads (no fixed compile time specification)
 
-### Data Structures
+The [documentation](https://mpoeter.github.io/xenium) provides more details.
+
+This project is based on my previous work in https://github.com/mpoeter/emr
+
+# Usage Example
+
+```cpp
+#include <xenium/ramalhete_queue.hpp>
+#include <xenium/reclamation/epoch_based.hpp>
+
+struct msg { ... };
+
+xenium::ramalhete_queue<
+  std::unique_ptr<msg>,
+  xenium::policy::reclaimer<xenium::reclamation::epoch_based<>>,
+  xenium::policy::entries_per_node<2048>
+> queue;
+
+queue.push(std::make_unique<msg>());
+
+std::unique_ptr<msg> data;
+if (queue.try_pop(data)) {
+    // do something with data
+}
+```
+
+## Data Structures
 At the moment the number of provided data structures is rather small since the focus so far
 was on the reclamation schemes. However, the plan is to add several more data structures in
 the near future.
@@ -19,6 +49,9 @@ the near future.
 Michael and Scott \[[MS96](#ref-michael-1996)\].
 * `ramalhete_queue` - a fast unbounded lock-free multi-producer/multi-consumer queue proposed by
 Ramalhete \[[Ram16](#ref-ramalhete-2016)\].
+* `vyukov_bounded_queue` - a bounded multi-producer/multi-consumer FIFO queue based on the version proposed by Vyukov \[[Vyu10 ](#ref-vyukov-2010)\].
+* `kirsch_kfifo_queue` - an unbounded multi-producer/multi-consumer k-FIFO queue proposed by Kirsch et al. \[[KLP13](#ref-kirsch-2013)\].
+* `kirsch_bounded_kfifo_queue` - a bounded multi-producer/multi-consumer k-FIFO queue proposed by Kirsch et al. \[[KLP13](#ref-kirsch-2013)\].
 * `harris_michael_list_based_set` - a lock-free container that contains a sorted set of unique objects.
 This data structure is based on the solution proposed by Michael \[[Mic02](#ref-michael-2002)\] which builds
 upon the original proposal by Harris \[[Har01](#ref-harris-2001)\].
@@ -28,8 +61,11 @@ upon the original proposal by Harris \[[Har01](#ref-harris-2001)\].
 Chase and Lev \[[CL05](#ref-chase-2005)\].
 * `vyukov_hash_map` - a concurrent hash-map that uses fine grained locking for update operations.
 This implementation is heavily inspired by the version proposed by Vyukov \[[Vyu08](#ref-vyukov-2008)\].
+* `left_right` - a generic implementation of the LeftRight algorithm proposed by Ramalhete and Correia
+\[[RC15](#ref-ramalhete-2015)\].
+* `seqlock` - an implementation of the sequence lock (also often referred to as "sequential lock").
 
-### Reclamation Schemes
+## Reclamation Schemes
 
 The implementation of the reclamation schemes is based on an adapted version of the interface
 proposed by Robison \[[Rob13](#ref-robison-2013)\].
@@ -39,12 +75,36 @@ The following reclamation schemes are implemented:
 * `hazard_pointer` \[[Mic04](#ref-michael-2004)\]
 * `hazard_eras` \[[RC17](#ref-ramalhete-2017)\]
 * `quiescent_state_based`
-* `epoch_based` \[[Fra04](#ref-fraser-2004)\]
-* `new_epoch_based` \[[HMBW07](#ref-hart-2007)\]
-* `debra` \[[Bro15](#ref-brown-2015)\]
+* `generic_epoch_based` - this is a generalized epoch based reclaimer that can be configured in several
+ways. For simplicity, the following aliases are predefined for the corresponding configurations.
+  * `epoch_based` \[[Fra04](#ref-fraser-2004)\]
+  * `new_epoch_based` \[[HMBW07](#ref-hart-2007)\]
+  * `debra` \[[Bro15](#ref-brown-2015)\]
 * `stamp_it` \[[PT18a](#ref-pöter-2018), [PT18b](#ref-pöter-2018-tr)\]
 
-#### References
+## Building
+
+xenium is a header only library, so in order to use it, it is sufficient to include the xenium folder
+in your list of include directories. No other 3rd party libraries are required. However, the implementation
+uses C++17 features, so a compiler with sufficient C++17 support is required. The following compilers are
+used in the CI builds and are therefore known to be supported:
+  * gcc8
+  * clang9
+  * Visual Studio 2017
+
+The unit test require `googletest` and the benchmarks require `taocpp/json` and `taocpp/config`. These
+dependencies are included as submodules, so the unit tests and/or the bencmarks can be built as follows:
+```
+git clone https://github.com/mpoeter/xenium.git && cd xenium
+git submodule update --init --recursive
+mkdir build && cd build
+cmake ..
+make gtest
+make benchmark
+```
+
+
+### References
 
 <table style="border:0px">
 <tr>
@@ -84,6 +144,13 @@ The following reclamation schemes are implemented:
     <a href=http://csng.cs.toronto.edu/publication_files/0000/0159/jpdc07.pdf>
     Performance of memory reclamation for lockless synchronization</a>.
     Journal of Parallel and Distributed Computing, 67(12):1270–1285, 2007.</td>
+</tr>
+<tr>
+    <td valign="top"><a name="ref-kirsch-2013"></a>[KLP13]</td>
+    <td>Christoph Kirsch, Michael Lippautz, and Hannes Payer.
+    <a href="http://www.cs.uni-salzburg.at/~ck/content/publications/conferences/PaCT13-FastScalableQueues.pdf">
+    Fast and scalable, lock-free k-FIFO queues</a>.
+    In <i>Proceedings of the International Conference on Parallel Computing Technologies (PaCT)</i>, pages 208–223, Springer-Verlag, 2013.
 </tr>
 <tr>
     <td valign="top"><a name="ref-michael-2002"></a>[Mic02]</td>
@@ -137,6 +204,13 @@ The following reclamation schemes are implemented:
     Blog, November 2016.</td>
 </tr>
 <tr>
+    <td valign="top"><a name="ref-ramalhete-2015"></a>[RC15]</td>
+    <td>Pedro Ramalhete and Andreia Correia.
+    <a href=https://github.com/pramalhe/ConcurrencyFreaks/blob/master/papers/left-right-2014.pdf>
+    Left-Right - A Concurrency Control Technique with Wait-Free Population Oblivious Reads</a>.
+    October 2015</td>
+</tr>
+<tr>
     <td valign="top"><a name="ref-ramalhete-2017"></a>[RC17]</td>
     <td>Pedro Ramalhete and Andreia Correia.
     <a href=https://github.com/pramalhe/ConcurrencyFreaks/blob/master/papers/hazarderas-2017.pdf>
@@ -161,6 +235,12 @@ The following reclamation schemes are implemented:
     <td>Dmitry Vyukov.
     <a href=https://groups.google.com/forum/#!topic/lock-free/qCYGGkrwbcA>
     Scalable hash map</a>. Google Groups posting, 2008.</td>
+</tr>
+<tr>
+    <td valign="top"><a name="ref-vyukov-2010"></a>[Vyu10]</td>
+    <td>Dmitry Vyukov.
+    <a href=https://groups.google.com/forum/#!topic/lock-free/-bqYlfbQmH0>
+    Simple and efficient bounded MPMC queue</a>. Google Groups posting, 2010.</td>
 </tr>
 </table>
 

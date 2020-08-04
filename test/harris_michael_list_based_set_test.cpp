@@ -1,10 +1,7 @@
 #include <xenium/reclamation/lock_free_ref_count.hpp>
 #include <xenium/reclamation/hazard_pointer.hpp>
 #include <xenium/reclamation/hazard_eras.hpp>
-#include <xenium/reclamation/epoch_based.hpp>
-#include <xenium/reclamation/new_epoch_based.hpp>
 #include <xenium/reclamation/quiescent_state_based.hpp>
-#include <xenium/reclamation/debra.hpp>
 #include <xenium/reclamation/generic_epoch_based.hpp>
 #include <xenium/reclamation/stamp_it.hpp>
 #include <xenium/harris_michael_list_based_set.hpp>
@@ -21,16 +18,15 @@ struct HarrisMichaelListBasedSet : testing::Test {};
 
 using Reclaimers = ::testing::Types<
     xenium::reclamation::lock_free_ref_count<>,
-    xenium::reclamation::hazard_pointer<xenium::reclamation::static_hazard_pointer_policy<3>>,
-    xenium::reclamation::hazard_eras<xenium::reclamation::static_hazard_eras_policy<3>>,
-    xenium::reclamation::epoch_based<10>,
-    xenium::reclamation::new_epoch_based<10>,
+    xenium::reclamation::hazard_pointer<>::with<
+      xenium::policy::allocation_strategy<xenium::reclamation::hp_allocation::static_strategy<3>>>,
+    xenium::reclamation::hazard_eras<>::with<
+      xenium::policy::allocation_strategy<xenium::reclamation::he_allocation::static_strategy<3>>>,
     xenium::reclamation::quiescent_state_based,
-    xenium::reclamation::debra<20>,
     xenium::reclamation::stamp_it,
-    xenium::reclamation::epoch_based2<>,
-    xenium::reclamation::new_epoch_based2<>,
-    xenium::reclamation::debra2<>
+    xenium::reclamation::epoch_based<>::with<xenium::policy::scan_frequency<10>>,
+    xenium::reclamation::new_epoch_based<>::with<xenium::policy::scan_frequency<10>>,
+    xenium::reclamation::debra<>::with<xenium::policy::scan_frequency<10>>
   >;
 TYPED_TEST_CASE(HarrisMichaelListBasedSet, Reclaimers);
 
@@ -180,7 +176,7 @@ TYPED_TEST(HarrisMichaelListBasedSet, parallel_usage)
     {
       for (int j = 0; j < MaxIterations; ++j)
       {
-        typename Reclaimer::region_guard critical_region{};
+        [[maybe_unused]] typename Reclaimer::region_guard guard{};
         EXPECT_EQ(list.end(), list.find(i));
         EXPECT_TRUE(list.emplace(i));
         auto it = list.find(i);
@@ -216,7 +212,7 @@ TYPED_TEST(HarrisMichaelListBasedSet, parallel_usage_with_same_values)
       for (int j = 0; j < MaxIterations / 10; ++j)
         for (int i = 0; i < 10; ++i)
         {
-          typename Reclaimer::region_guard critical_region{};
+          [[maybe_unused]] typename Reclaimer::region_guard guard{};
           list.contains(i);
           list.emplace(i);
           auto it = list.find(i);

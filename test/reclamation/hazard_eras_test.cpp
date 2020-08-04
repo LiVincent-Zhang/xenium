@@ -4,16 +4,16 @@
 
 namespace {
 
-  struct my_static_hazard_eras_policy : xenium::reclamation::static_hazard_eras_policy<2>
+  struct my_static_allocation_strategy : xenium::reclamation::he_allocation::static_strategy<2>
   {
-    // we are redifining this method in our own policy to enforce the
+    // we are redifining this method in our own strategy to enforce the
     // immediate reclamation of nodes.
     static constexpr size_t retired_nodes_threshold() { return 0; }
   };
 
-  struct my_dynamic_hazard_eras_policy : xenium::reclamation::dynamic_hazard_eras_policy<2>
+  struct my_dynamic_allocation_strategy : xenium::reclamation::he_allocation::dynamic_strategy<2>
   {
-    // we are redifining this method in our own policy to enforce the
+    // we are redifining this method in our own strategy to enforce the
     // immediate reclamation of nodes.
     static constexpr size_t retired_nodes_threshold() { return 0; }
   };
@@ -21,7 +21,7 @@ namespace {
   template <typename Policy>
   struct HazardEras : ::testing::Test
   {
-    using HE = xenium::reclamation::hazard_eras<Policy>;
+    using HE = xenium::reclamation::hazard_eras<>::with<xenium::policy::allocation_strategy<Policy>>;
 
     struct Foo : HE::template enable_concurrent_ptr<Foo, 2>
     {
@@ -41,12 +41,25 @@ namespace {
       FooBar(Foo** instance) : Foo(instance) {}
     };
 
+    struct WithCustomDeleter;
+    struct DummyDeleter {
+      bool* called;
+      WithCustomDeleter* reference;
+      void operator()(WithCustomDeleter* obj) const;
+    };
+    struct WithCustomDeleter : HE::template enable_concurrent_ptr<WithCustomDeleter, 2, DummyDeleter> {};
+
     template <typename T>
     using concurrent_ptr = typename HE::template concurrent_ptr<T>;
     template <typename T> using marked_ptr = typename concurrent_ptr<T>::marked_ptr;
 
-    Foo* foo = new Foo(&foo);
-    marked_ptr<Foo> mp = marked_ptr<Foo>(foo, 3);
+    Foo* foo = nullptr;
+    marked_ptr<Foo> mp{};
+
+    void SetUp() override {
+      this->foo = new Foo(&foo);
+      this->mp = marked_ptr<Foo>(foo, 3);
+    }
 
     void TearDown() override
     {
@@ -60,7 +73,7 @@ namespace {
         delete foo;
     }
 
-    Foo* dummy2;
+    Foo* dummy2 = nullptr;
     void advance_era() {
       // In order to do advance the global era counter we create a dummy object and mark it for reclamation.
       Foo* dummy = new Foo(&dummy2);
@@ -71,9 +84,16 @@ namespace {
     }
   };
 
+  template <typename Policy>
+  void HazardEras<Policy>::DummyDeleter::operator()(WithCustomDeleter* obj) const {
+    *called = true;
+    EXPECT_EQ(reference, obj);
+    delete obj;
+  }
+
   using Policies = ::testing::Types<
-    my_static_hazard_eras_policy,
-    my_dynamic_hazard_eras_policy
+    my_static_allocation_strategy,
+    my_dynamic_allocation_strategy
   >;
   TYPED_TEST_CASE(HazardEras, Policies);
 
@@ -130,7 +150,7 @@ namespace {
   }
   TYPED_TEST(HazardEras, static_policy_throws_bad_hazard_era_alloc_when_HE_pool_is_exceeded)
   {
-    if (std::is_same<TypeParam , my_dynamic_hazard_eras_policy>::value)
+    if (std::is_same<TypeParam , my_dynamic_allocation_strategy>::value)
       return;
 
     using guard_ptr = typename TestFixture::template concurrent_ptr<typename TestFixture::Foo>::guard_ptr;
@@ -160,6 +180,16 @@ namespace {
     this->mp = nullptr;
     EXPECT_EQ(nullptr, this->foo);
     EXPECT_EQ(nullptr, gp.get());
+  }
+
+  TYPED_TEST(HazardEras, supports_custom_deleters)
+  {
+    bool called = false;
+    using TT = typename TestFixture::WithCustomDeleter;
+    using Deleter = typename TestFixture::DummyDeleter; 
+    typename TestFixture::HE::template concurrent_ptr<TT>::guard_ptr gp(new TT());
+    gp.reclaim(Deleter{&called, gp.get()});
+    EXPECT_TRUE(called);
   }
 
   TYPED_TEST(HazardEras, object_cannot_be_reclaimed_as_long_as_another_guard_protects_it)
@@ -219,7 +249,7 @@ namespace {
 
   TYPED_TEST(HazardEras, dynamic_policy_can_protect_more_than_K_objects)
   {
-    if (std::is_same<TypeParam , my_static_hazard_eras_policy>::value)
+    if (std::is_same<TypeParam , my_static_allocation_strategy>::value)
       return;
 
     const size_t count = 100;

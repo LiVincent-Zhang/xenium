@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -38,6 +38,7 @@ namespace xenium { namespace reclamation {
       }
 
       global_thread_block_list.release_entry(control_block);
+      control_block = nullptr;
     }
 
     void enter_region()
@@ -279,18 +280,12 @@ namespace xenium { namespace reclamation {
 
   inline quiescent_state_based::thread_data& quiescent_state_based::local_thread_data()
   {
-    // workaround for a GCC issue with weak references for static thread_local variables
+    // workaround for a GCC issue with multiple definitions of __tls_guard
     static thread_local thread_data local_thread_data;
     return local_thread_data;
   }
 
-  SELECT_ANY std::atomic<unsigned> quiescent_state_based::global_epoch;
-  SELECT_ANY detail::thread_block_list<quiescent_state_based::thread_control_block>
-    quiescent_state_based::global_thread_block_list;
-
 #ifdef TRACK_ALLOCATIONS
-  SELECT_ANY detail::allocation_tracker quiescent_state_based::allocation_tracker;
-
   inline void quiescent_state_based::count_allocation()
   { local_thread_data().allocation_counter.count_allocation(); }
 

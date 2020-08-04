@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -8,6 +8,11 @@
 
 #include <atomic>
 #include <iterator>
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4324) // structure was padded due to alignment specifier
+#endif
 
 namespace xenium { namespace reclamation { namespace detail {
 
@@ -23,8 +28,8 @@ public:
   struct entry
   {
     entry() :
-      state(entry_state::active),
-      next_entry(nullptr)
+      next_entry(nullptr),
+      state(entry_state::active)
     {}
 
     // Normally this load operation can use relaxed semantic, as all reclamation schemes
@@ -36,6 +41,7 @@ public:
     }
 
     void abandon() {
+      assert(is_active());
       // (1) - this release-store synchronizes-with the acquire-CAS (2)
       //       or any acquire-fence that is sequenced-after calling is_active.
       state.store(entry_state::free, std::memory_order_release);
@@ -68,12 +74,17 @@ public:
     std::atomic<entry_state> state;
   };
 
-  class iterator : public std::iterator<std::forward_iterator_tag, T>
+  class iterator
   {
     T* ptr = nullptr;
 
     explicit iterator(T* ptr) : ptr(ptr) {}
   public:
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = T;
+    using difference_type = std::ptrdiff_t;
+    using pointer = T*;
+    using reference = T&;
 
     iterator() = default;
 
@@ -204,12 +215,15 @@ private:
     return result;
   }
 
-  std::atomic<T*> head;
+  std::atomic<T*> head{nullptr};
 
-  alignas(64) std::atomic<DeletableObject*> abandoned_retired_nodes;
+  alignas(64) std::atomic<DeletableObject*> abandoned_retired_nodes{nullptr};
 };
 
 }}}
 
+#ifdef _MSC_VER
+#pragma warning(pop)
 #endif
 
+#endif

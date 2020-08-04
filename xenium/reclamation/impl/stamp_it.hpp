@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -14,13 +14,18 @@
 
 #include <algorithm>
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4324) // structure was padded due to alignment specifier
+#endif
+
 namespace xenium { namespace reclamation {
 
   struct stamp_it::thread_control_block :
     aligned_object<thread_control_block, 1 << MarkBits>,
     detail::thread_block_list<thread_control_block>::entry
   {
-    using concurrent_ptr = std::atomic<detail::marked_ptr<thread_control_block, MarkBits>>;
+    using concurrent_ptr = std::atomic<marked_ptr<thread_control_block, MarkBits>>;
 
     concurrent_ptr prev;
     concurrent_ptr next;
@@ -36,7 +41,7 @@ namespace xenium { namespace reclamation {
   class stamp_it::thread_order_queue
   {
   public:
-    using marked_ptr = detail::marked_ptr<thread_control_block, MarkBits>;
+    using marked_ptr = xenium::marked_ptr<thread_control_block, MarkBits>;
     using concurrent_ptr = std::atomic<marked_ptr>;
 
     thread_order_queue()
@@ -572,8 +577,8 @@ namespace xenium { namespace reclamation {
     thread_control_block* head;
     thread_control_block* tail;
 
-    alignas(64) std::atomic<deletable_object_with_stamp*> global_retired_nodes;
-    alignas(64) detail::thread_block_list<thread_control_block> global_thread_block_list;
+    alignas(64) std::atomic<deletable_object_with_stamp*> global_retired_nodes{nullptr};
+    alignas(64) detail::thread_block_list<thread_control_block> global_thread_block_list{};
     friend class stamp_it;
   };
 
@@ -582,11 +587,11 @@ namespace xenium { namespace reclamation {
     ~thread_data()
     {
       assert(region_entries == 0);
-      if (control_block)
-      {
-        control_block->abandon();
-        control_block = nullptr;
-      }
+      if (control_block == nullptr)
+        return;
+
+      control_block->abandon();
+      control_block = nullptr;
 
       // reclaim as much nodes as possible
       process_local_nodes();
@@ -880,14 +885,19 @@ namespace xenium { namespace reclamation {
     local_thread_data().add_retired_node(this->ptr.get());
     reset();
   }
-
+  
   inline stamp_it::thread_data& stamp_it::local_thread_data()
   {
+    // workaround for a GCC issue with multiple definitions of __tls_guard
     static thread_local thread_data local_thread_data;
     return local_thread_data;
   }
 
-  SELECT_ANY stamp_it::thread_order_queue stamp_it::queue;
+#if _MSC_VER
+  __declspec(selectany) stamp_it::thread_order_queue stamp_it::queue;
+#else
+  inline stamp_it::thread_order_queue stamp_it::queue;
+#endif
 
 #ifdef WITH_PERF_COUNTER
   inline stamp_it::performance_counters stamp_it::get_performance_counters()
@@ -909,8 +919,6 @@ namespace xenium { namespace reclamation {
 #endif
 
 #ifdef TRACK_ALLOCATIONS
-  SELECT_ANY detail::allocation_tracker stamp_it::allocation_tracker;
-
   inline void stamp_it::count_allocation()
   { local_thread_data().allocation_counter.count_allocation(); }
 
@@ -918,3 +926,7 @@ namespace xenium { namespace reclamation {
   { local_thread_data().allocation_counter.count_reclamation(); }
 #endif
 }}
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif

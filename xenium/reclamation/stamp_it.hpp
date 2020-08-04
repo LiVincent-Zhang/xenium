@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -70,8 +70,8 @@ namespace xenium { namespace reclamation {
     static constexpr stamp_t PendingPush = 2;
     static constexpr stamp_t StampInc = 4;
 
-    static thread_data& local_thread_data();
     static thread_order_queue queue;
+    static thread_data& local_thread_data(); 
 
     ALLOCATION_TRACKING_FUNCTIONS;
   };
@@ -84,7 +84,7 @@ namespace xenium { namespace reclamation {
   protected:
     virtual ~deletable_object_with_stamp() = default;
   private:
-    stamp_t stamp;
+    stamp_t stamp{};
     friend class stamp_it;
   };
 
@@ -116,8 +116,8 @@ namespace xenium { namespace reclamation {
     using Deleter = typename T::Deleter;
   public:
     // Guard a marked ptr.
-    guard_ptr(const MarkedPtr& p = MarkedPtr()) noexcept;
-    explicit guard_ptr(const guard_ptr& p) noexcept;
+    explicit guard_ptr(const MarkedPtr& p = MarkedPtr()) noexcept;
+    guard_ptr(const guard_ptr& p) noexcept;
     guard_ptr(guard_ptr&& p) noexcept;
 
     guard_ptr& operator=(const guard_ptr& p) noexcept;

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -11,23 +11,83 @@
 #include <xenium/reclamation/detail/allocation_tracker.hpp>
 
 #include <xenium/acquire_guard.hpp>
+#include <xenium/parameter.hpp>
 
 #include <memory>
 
-namespace xenium { namespace reclamation {
+namespace xenium {
+
+namespace policy {
+  /**
+   * @brief Policy to configure whether to insert padding after the internal header for
+   * `lock_free_ref_count` reclamation.
+   * 
+   * This policy is used to define whether a padding should be inserted between the internal
+   * header that contains the reference counter and the actual object. This can be used to
+   * avoid false sharing, but of course it increases memory overhead, which can also cause
+   * a performance drop in some cases.
+   * 
+   * @tparam Value
+   */
+  template <bool Value> struct insert_padding;
 
   /**
-   * @brief Lock-free reference counting
-   * @tparam InsertPadding
-   * @tparam ThreadLocalFreeListSize
+   * @brief Policy to configure the size of thread-local free-lists for `lock` reclamation.
+   * 
+   * This policy is used to define the max. number of items in each thread-local free-list.
+   * If this is set to zero, then thread-local free-lists are completely disable.
+   * Using thread-local free-lists cna reduce the contention on the global free-list, but it
+   * may lead to increased memory usage, since items stored in a thread-local free-list can
+   * only be reused by the owning thread.
+   * 
+   * @tparam Value
    */
-  template <bool InsertPadding = false, size_t ThreadLocalFreeListSize = 0>
+  template <std::size_t Value> struct thread_local_free_list_size;
+}
+  
+namespace reclamation {
+  template <
+    bool InsertPadding = false,
+    std::size_t ThreadLocalFreeListSize = 0
+  >
+  struct lock_free_ref_count_traits {
+    static constexpr bool insert_padding = InsertPadding;
+    static constexpr std::size_t thread_local_free_list_size = ThreadLocalFreeListSize;
+
+    template <class... Policies>
+    using with = lock_free_ref_count_traits<
+      parameter::value_param_t<bool, policy::insert_padding, InsertPadding, Policies...>::value,
+      parameter::value_param_t<std::size_t, policy::thread_local_free_list_size, ThreadLocalFreeListSize, Policies...>::value
+    >;
+  };
+
+  /**
+   * @brief An implementation of the lock-free reference counting (LFRC) schemea as proposed
+   * by Valois \[[Val95](index.html#ref-valois-1995), [MS95](index.html#ref-michael-1995)\].
+   *
+   * This scheme cannot handle types that define their own new/delete operators, and it
+   * does not allow the use of custom deleters.
+   * 
+   * This class does not take a list of policies, but a `Traits` type that can be customized
+   * with a list of policies. The following policies are supported:
+   *  * `xenium::policy::insert_padding`<br>
+   *    Defines whether a padding should be inserted between the internal header and the actual
+   *    object. (defaults to false)
+   *  * `xenium::policy::thread_local_free_list_size`<br>
+   *    Defines the max. number of items in each thread-local free-list. (defaults to 0)
+   * 
+   * @tparam Traits
+   */
+  template <class Traits = lock_free_ref_count_traits<>>
   class lock_free_ref_count
   {
     template <class T, class MarkedPtr>
     class guard_ptr;
 
   public:
+    template <class... Policies>
+    using with = lock_free_ref_count<typename Traits::template with<Policies...>>;
+
     template <class T, std::size_t N = T::number_of_mark_bits>
     using concurrent_ptr = detail::concurrent_ptr<T, N, guard_ptr>;
 
@@ -43,13 +103,14 @@ namespace xenium { namespace reclamation {
 
     ALLOCATION_TRACKING_FUNCTIONS;
 #ifdef TRACK_ALLOCATIONS
+    inline static thread_local detail::registered_allocation_counter<lock_free_ref_count> allocation_counter_;
     static detail::allocation_counter& allocation_counter();
 #endif
   };
 
-  template <bool InsertPadding, size_t ThreadLocalFreeListSize>
+  template <class Traits>
   template <class T, std::size_t N, class DeleterT>
-  class lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::enable_concurrent_ptr:
+  class lock_free_ref_count<Traits>::enable_concurrent_ptr:
     private detail::tracked_object<lock_free_ref_count>
   {
   protected:
@@ -90,7 +151,7 @@ namespace xenium { namespace reclamation {
     struct padded_header : unpadded_header {
       char padding[64 - sizeof(unpadded_header)];
     };
-    using header = std::conditional_t<InsertPadding, padded_header, unpadded_header>;
+    using header = std::conditional_t<Traits::insert_padding, padded_header, unpadded_header>;
     header* getHeader() { return static_cast<header*>(static_cast<void*>(this)) - 1; }
     const header* getHeader() const { return static_cast<const header*>(static_cast<const void*>(this)) - 1; }
 
@@ -104,12 +165,12 @@ namespace xenium { namespace reclamation {
     using marked_ptr = typename concurrent_ptr<T, N>::marked_ptr;
 
     class free_list;
-    static free_list global_free_list;
+    static free_list global_free_list;  
   };
 
-  template <bool InsertPadding, size_t ThreadLocalFreeListSize>
+  template <class Traits>
   template <class T, class MarkedPtr>
-  class lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::guard_ptr :
+  class lock_free_ref_count<Traits>::guard_ptr :
       public detail::guard_ptr<T, MarkedPtr, guard_ptr<T, MarkedPtr>>
   {
     using base = detail::guard_ptr<T, MarkedPtr, guard_ptr>;
@@ -119,12 +180,12 @@ namespace xenium { namespace reclamation {
     friend class enable_concurrent_ptr;
 
     // Guard a marked ptr.
-    guard_ptr(const MarkedPtr& p = MarkedPtr()) noexcept;
-    explicit guard_ptr(const guard_ptr& p) noexcept;
+    explicit guard_ptr(const MarkedPtr& p = MarkedPtr()) noexcept;
+    guard_ptr(const guard_ptr& p) noexcept;
     guard_ptr(guard_ptr&& p) noexcept;
 
     guard_ptr& operator=(const guard_ptr& p);
-    guard_ptr& operator=(guard_ptr&& p);
+    guard_ptr& operator=(guard_ptr&& p) noexcept;
 
     // Atomically take snapshot of p, and *if* it points to unreclaimed object, acquire shared ownership of it.
     void acquire(const concurrent_ptr<T>& p, std::memory_order order = std::memory_order_seq_cst) noexcept;

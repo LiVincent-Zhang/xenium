@@ -1,10 +1,7 @@
 #include <xenium/reclamation/lock_free_ref_count.hpp>
 #include <xenium/reclamation/hazard_pointer.hpp>
 #include <xenium/reclamation/hazard_eras.hpp>
-#include <xenium/reclamation/epoch_based.hpp>
-#include <xenium/reclamation/new_epoch_based.hpp>
 #include <xenium/reclamation/quiescent_state_based.hpp>
-#include <xenium/reclamation/debra.hpp>
 #include <xenium/reclamation/generic_epoch_based.hpp>
 #include <xenium/reclamation/stamp_it.hpp>
 #include <xenium/harris_michael_hash_map.hpp>
@@ -13,6 +10,11 @@
 
 #include <vector>
 #include <thread>
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4458) // declaration hides member
+#endif
 
 namespace {
 
@@ -27,16 +29,16 @@ struct HarrisMichaelHashMap : ::testing::Test
 
 using Reclaimers = ::testing::Types<
     xenium::reclamation::lock_free_ref_count<>,
-    xenium::reclamation::hazard_pointer<xenium::reclamation::static_hazard_pointer_policy<3>>,
-    xenium::reclamation::hazard_eras<xenium::reclamation::static_hazard_eras_policy<3>>,
-    xenium::reclamation::epoch_based<10>,
-    xenium::reclamation::new_epoch_based<10>,
+    xenium::reclamation::hazard_pointer<>::with<
+      xenium::policy::allocation_strategy<xenium::reclamation::hp_allocation::static_strategy<3>>>,
+    xenium::reclamation::hazard_eras<>::with<
+      xenium::policy::allocation_strategy<xenium::reclamation::he_allocation::static_strategy<3>>>,
     xenium::reclamation::quiescent_state_based,
-    xenium::reclamation::debra<20>,
     xenium::reclamation::stamp_it,
-    xenium::reclamation::epoch_based2<>,
-    xenium::reclamation::new_epoch_based2<>,
-    xenium::reclamation::debra2<>
+    xenium::reclamation::debra<>::with<xenium::policy::scan_frequency<10>>,
+    xenium::reclamation::epoch_based<>::with<xenium::policy::scan_frequency<10>>,
+    xenium::reclamation::new_epoch_based<>::with<xenium::policy::scan_frequency<10>>,
+    xenium::reclamation::debra<>
   >;
 TYPED_TEST_CASE(HarrisMichaelHashMap, Reclaimers);
 
@@ -274,8 +276,8 @@ TYPED_TEST(HarrisMichaelHashMap, parallel_usage)
       for (int j = 0; j < MaxIterations; ++j)
       {
         std::string k = std::to_string(i);
-        typename Reclaimer::region_guard critical_region{};
-		    EXPECT_EQ(map.end(), map.find(k));
+        [[maybe_unused]] typename Reclaimer::region_guard guard{};
+        EXPECT_EQ(map.end(), map.find(k));
         EXPECT_TRUE(map.emplace(k, i));
         auto it = map.find(k);
         EXPECT_NE(map.end(), it);
@@ -291,7 +293,7 @@ TYPED_TEST(HarrisMichaelHashMap, parallel_usage)
         EXPECT_FALSE(map.contains(k));
 
         for (auto& v : map)
-          ;
+          (void)v;
       }
     }));
   }
@@ -318,7 +320,7 @@ TYPED_TEST(HarrisMichaelHashMap, parallel_usage_with_same_values)
         for (int i = 0; i < 10; ++i)
         {
           std::string k = std::to_string(i);
-          typename Reclaimer::region_guard critical_region{};
+          [[maybe_unused]] typename Reclaimer::region_guard guard{};
           map.contains(k);
           map.emplace(k, i);
           auto it = map.find(k);
@@ -332,7 +334,7 @@ TYPED_TEST(HarrisMichaelHashMap, parallel_usage_with_same_values)
           result.first.reset();
 
           for (auto& v : map)
-            ;
+            (void)v;
         }
     }));
   }
@@ -342,3 +344,7 @@ TYPED_TEST(HarrisMichaelHashMap, parallel_usage_with_same_values)
 }
 
 }
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif

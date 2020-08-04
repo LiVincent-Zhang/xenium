@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -10,6 +10,11 @@
 #include <xenium/backoff.hpp>
 #include <xenium/parameter.hpp>
 #include <xenium/policy.hpp>
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4324) // structure was padded due to alignment specifier
+#endif
 
 namespace xenium {
 /**
@@ -31,7 +36,7 @@ namespace xenium {
 template <class T, class... Policies>
 class michael_scott_queue {
 public:
-  using value_type = T*;
+  using value_type = T;
   using reclaimer = parameter::type_param_t<policy::reclaimer, parameter::nil, Policies...>;
   using backoff = parameter::type_param_t<policy::backoff, no_backoff, Policies...>;
 
@@ -58,7 +63,7 @@ public:
    * @param result
    * @return `true` if the operation was successful, otherwise `false`
    */
-  bool try_pop(T &result);
+  [[nodiscard]] bool try_pop(T &result);
 
 private:
   struct node;
@@ -69,6 +74,9 @@ private:
   
   struct node : reclaimer::template enable_concurrent_ptr<node>
   {
+    node() : value() {};
+    node(T&& v) : value(std::move(v)) {}
+
     T value;
     concurrent_ptr next;
   };
@@ -102,8 +110,7 @@ michael_scott_queue<T, Policies...>::~michael_scott_queue()
 template <class T, class... Policies>
 void michael_scott_queue<T, Policies...>::push(T value)
 {
-  node* n = new node{};
-  n->value = std::move(value);
+  node* n = new node(std::move(value));
 
   backoff backoff;
 
@@ -192,5 +199,9 @@ bool michael_scott_queue<T, Policies...>::try_pop(T &result)
   return true;
 }
 }
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #endif

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -43,7 +43,8 @@ namespace xenium { namespace reclamation { namespace detail {
       values() :
         allocated_instances(),
         reclaimed_instances(),
-        dead(false)
+        dead(false),
+        next()
       {}
       std::atomic<std::size_t> allocated_instances;
       std::atomic<std::size_t> reclaimed_instances;
@@ -129,7 +130,7 @@ namespace xenium { namespace reclamation { namespace detail {
   detail::registered_allocation_counter<tracker> allocation_counter;
 
 #define ALLOCATION_TRACKER \
-  static detail::allocation_tracker allocation_tracker;
+  inline static detail::allocation_tracker allocation_tracker;
 
 #define ALLOCATION_TRACKING_FUNCTIONS \
   template <typename> friend struct detail::tracked_object; \

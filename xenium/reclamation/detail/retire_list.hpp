@@ -1,12 +1,12 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
 #pragma once
 
-#include "deletable_object.hpp"
-#include <boost/config.hpp>
+#include <xenium/detail/port.hpp>
+#include <xenium/reclamation/detail/deletable_object.hpp>
 
 namespace xenium { namespace reclamation { namespace detail {
   template <class Node = deletable_object>
@@ -85,7 +85,7 @@ namespace xenium { namespace reclamation { namespace detail {
                                            std::memory_order_relaxed));
     }
 
-    BOOST_FORCEINLINE Node* adopt()
+    XENIUM_FORCEINLINE Node* adopt()
     {
       if (head.load(std::memory_order_relaxed) == nullptr)
         return nullptr;

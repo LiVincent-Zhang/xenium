@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -7,11 +7,16 @@
 #error "This is an impl file and must not be included directly!"
 #endif
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4127) // conditional expression is constant
+#endif
+
 namespace xenium { namespace reclamation {
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, std::size_t N, class Deleter>
-    class lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::enable_concurrent_ptr<T, N, Deleter>::free_list {
+    class lock_free_ref_count<Traits>::enable_concurrent_ptr<T, N, Deleter>::free_list {
     public:
       T *pop() {
         if (max_local_elements > 0)
@@ -112,7 +117,7 @@ namespace xenium { namespace reclamation {
         T *head = nullptr;
       };
 
-      static constexpr size_t max_local_elements = ThreadLocalFreeListSize;
+      static constexpr size_t max_local_elements = Traits::thread_local_free_list_size;
 
       static thread_local_free_list &local_free_list() {
         // workaround for gcc issue causing redefinition of __tls_guard when
@@ -122,9 +127,9 @@ namespace xenium { namespace reclamation {
       }
     };
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, std::size_t N, class Deleter>
-    void* lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+    void* lock_free_ref_count<Traits>::
     enable_concurrent_ptr<T, N, Deleter>::operator new(size_t sz) {
       assert(sz == sizeof(T) && "Cannot handle allocations of anything other than T instances");
       T *result = global_free_list.pop();
@@ -137,9 +142,9 @@ namespace xenium { namespace reclamation {
       return result;
     }
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, std::size_t N, class Deleter>
-    void lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+    void lock_free_ref_count<Traits>::
     enable_concurrent_ptr<T, N, Deleter>::operator delete(void *p) {
       auto node = static_cast<T *>(p);
       assert((node->ref_count().load(std::memory_order_relaxed) & RefCountClaimBit) == 0);
@@ -148,9 +153,9 @@ namespace xenium { namespace reclamation {
         node->push_to_free_list();
     }
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, std::size_t N, class Deleter>
-    bool lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+    bool lock_free_ref_count<Traits>::
     enable_concurrent_ptr<T, N, Deleter>::decrement_refcnt() {
       unsigned old_refcnt, new_refcnt;
       do {
@@ -169,32 +174,32 @@ namespace xenium { namespace reclamation {
       return (old_refcnt - new_refcnt) & RefCountClaimBit;
     }
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, class MarkedPtr>
-    lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+    lock_free_ref_count<Traits>::
     guard_ptr<T, MarkedPtr>::guard_ptr(const MarkedPtr &p) noexcept :
       base(p) {
       if (this->ptr.get() != nullptr)
         this->ptr->ref_count().fetch_add(RefCountInc, std::memory_order_relaxed);
     }
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, class MarkedPtr>
-    lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+    lock_free_ref_count<Traits>::
     guard_ptr<T, MarkedPtr>::guard_ptr(const guard_ptr &p) noexcept :
       guard_ptr(p.ptr) {}
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, class MarkedPtr>
-    lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+    lock_free_ref_count<Traits>::
     guard_ptr<T, MarkedPtr>::guard_ptr(guard_ptr &&p) noexcept :
       base(p.ptr) {
       p.ptr.reset();
     }
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, class MarkedPtr>
-    auto lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+    auto lock_free_ref_count<Traits>::
     guard_ptr<T, MarkedPtr>::operator=(const guard_ptr &p)
     -> guard_ptr & {
       if (&p == this)
@@ -207,10 +212,10 @@ namespace xenium { namespace reclamation {
       return *this;
     }
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, class MarkedPtr>
-    auto lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
-    guard_ptr<T, MarkedPtr>::operator=(guard_ptr &&p)
+    auto lock_free_ref_count<Traits>::
+    guard_ptr<T, MarkedPtr>::operator=(guard_ptr &&p) noexcept
     -> guard_ptr & {
       if (&p == this)
         return *this;
@@ -221,9 +226,9 @@ namespace xenium { namespace reclamation {
       return *this;
     }
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, class MarkedPtr>
-    void lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+    void lock_free_ref_count<Traits>::
     guard_ptr<T, MarkedPtr>::acquire(const concurrent_ptr <T> &p, std::memory_order order) noexcept {
       for (;;) {
         reset();
@@ -248,9 +253,9 @@ namespace xenium { namespace reclamation {
       }
     }
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, class MarkedPtr>
-    bool lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+    bool lock_free_ref_count<Traits>::
     guard_ptr<T, MarkedPtr>::acquire_if_equal(
       const concurrent_ptr <T> &p, const MarkedPtr &expected, std::memory_order order) noexcept {
       reset();
@@ -274,9 +279,9 @@ namespace xenium { namespace reclamation {
       return false;
     }
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, class MarkedPtr>
-    void lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+    void lock_free_ref_count<Traits>::
     guard_ptr<T, MarkedPtr>::reset() noexcept {
       auto p = this->ptr.get();
       this->ptr.reset();
@@ -291,10 +296,10 @@ namespace xenium { namespace reclamation {
       }
     }
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, class MarkedPtr>
-    void lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
-    guard_ptr<T, MarkedPtr>::reclaim(Deleter d) noexcept {
+    void lock_free_ref_count<Traits>::
+    guard_ptr<T, MarkedPtr>::reclaim(Deleter) noexcept {
       if (this->ptr.get() != nullptr) {
         assert(this->ptr->refs() > 1);
         // ref_count was initialized with "1", so we need an additional
@@ -306,31 +311,28 @@ namespace xenium { namespace reclamation {
       reset();
     }
 
-    template<bool InsertPadding, size_t ThreadLocalFreeListSize>
+    template<class Traits>
     template<class T, std::size_t N, class Deleter>
-    typename lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+    typename lock_free_ref_count<Traits>::
     template enable_concurrent_ptr<T, N, Deleter>::free_list
-      lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::
+      lock_free_ref_count<Traits>::
       enable_concurrent_ptr<T, N, Deleter>::global_free_list;
 
 #ifdef TRACK_ALLOCATIONS
-    template <bool InsertPadding, size_t ThreadLocalFreeListSize>
-    detail::allocation_tracker lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::allocation_tracker;
+    template <class Traits>
+    inline detail::allocation_counter& lock_free_ref_count<Traits>::allocation_counter()
+    { return allocation_counter_; };
 
-    template <bool InsertPadding, size_t ThreadLocalFreeListSize>
-    inline detail::allocation_counter&
-      lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::allocation_counter()
-    {
-      static thread_local detail::registered_allocation_counter<lock_free_ref_count> counter;
-      return counter;
-    };
-
-    template <bool InsertPadding, size_t ThreadLocalFreeListSize>
-    inline void lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::count_allocation()
+    template <class Traits>
+    inline void lock_free_ref_count<Traits>::count_allocation()
     { allocation_counter().count_allocation(); }
 
-    template <bool InsertPadding, size_t ThreadLocalFreeListSize>
-    inline void lock_free_ref_count<InsertPadding, ThreadLocalFreeListSize>::count_reclamation()
+    template <class Traits>
+    inline void lock_free_ref_count<Traits>::count_reclamation()
     { allocation_counter().count_reclamation(); }
 #endif
 }}
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif

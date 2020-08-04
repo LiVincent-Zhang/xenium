@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -8,6 +8,11 @@
 
 #include <memory>
 #include <type_traits>
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 26495) // uninitialized member variable
+#endif
 
 namespace xenium { namespace reclamation { namespace detail {
 
@@ -34,7 +39,6 @@ namespace xenium { namespace reclamation { namespace detail {
   struct deletable_object_with_non_empty_deleter : Base
   {
     using Deleter = DeleterT;
-    static_assert(std::is_base_of<deletable_object, Base>::value, "Base must derive from deletable_object");
     virtual void delete_self() override
     {
       Deleter& my_deleter = reinterpret_cast<Deleter&>(deleter_buffer);
@@ -46,11 +50,12 @@ namespace xenium { namespace reclamation { namespace detail {
 
     void set_deleter(Deleter deleter)
     {
-      reinterpret_cast<Deleter&>(deleter_buffer) = std::move(deleter);
+      new (&deleter_buffer) Deleter(std::move(deleter));
     }
 
   private:
-    char deleter_buffer[sizeof(Deleter)];
+    using buffer = typename std::aligned_storage<sizeof(Deleter), alignof(Deleter)>::type;
+    buffer deleter_buffer;
   };
 
   template <class Derived, class DeleterT, class Base>
@@ -64,7 +69,7 @@ namespace xenium { namespace reclamation { namespace detail {
       deleter(static_cast<Derived*>(this));
     }
 
-    void set_deleter(Deleter deleter) {}
+    void set_deleter(Deleter /*deleter*/) {}
   };
 
   template <class Derived, class Deleter = std::default_delete<Derived>, class Base = deletable_object>
@@ -73,5 +78,9 @@ namespace xenium { namespace reclamation { namespace detail {
     deletable_object_with_non_empty_deleter<Derived, Deleter, Base>
   >;
 }}}
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #endif

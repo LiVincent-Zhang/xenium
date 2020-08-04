@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -7,7 +7,13 @@
 #error "This is an impl file and must not be included directly!"
 #endif
 
-#include <boost/config.hpp>
+#include <xenium/detail/port.hpp>
+#include <array>
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4127) // conditional expression is constant
+#endif
 
 namespace xenium { namespace reclamation {
   namespace scan {
@@ -117,13 +123,13 @@ namespace xenium { namespace reclamation {
   template <class Traits>
   generic_epoch_based<Traits>::region_guard::region_guard() noexcept
   {
-    local_thread_data().enter_region();
+    local_thread_data.enter_region();
   }
 
   template <class Traits>
   generic_epoch_based<Traits>::region_guard::~region_guard() noexcept
   {
-    local_thread_data().leave_region();
+    local_thread_data.leave_region();
   }
 
   template <class Traits>
@@ -132,7 +138,7 @@ namespace xenium { namespace reclamation {
     base(p)
   {
     if (this->ptr)
-      local_thread_data().enter_critical();
+      local_thread_data.enter_critical();
   }
 
   template <class Traits>
@@ -160,7 +166,7 @@ namespace xenium { namespace reclamation {
     reset();
     this->ptr = p.ptr;
     if (this->ptr)
-      local_thread_data().enter_critical();
+      local_thread_data.enter_critical();
 
     return *this;
   }
@@ -192,11 +198,11 @@ namespace xenium { namespace reclamation {
     }
 
     if (!this->ptr)
-      local_thread_data().enter_critical();
+      local_thread_data.enter_critical();
     // (1) - this load operation potentially synchronizes-with any release operation on p.
     this->ptr = p.load(order);
     if (!this->ptr)
-      local_thread_data().leave_critical();
+      local_thread_data.leave_critical();
   }
 
   template <class Traits>
@@ -212,12 +218,12 @@ namespace xenium { namespace reclamation {
     }
 
     if (!this->ptr)
-      local_thread_data().enter_critical();
+      local_thread_data.enter_critical();
     // (2) - this load operation potentially synchronizes-with any release operation on p.
     this->ptr = p.load(order);
     if (!this->ptr || this->ptr != expected)
     {
-      local_thread_data().leave_critical();
+      local_thread_data.leave_critical();
       this->ptr.reset();
     }
 
@@ -229,7 +235,7 @@ namespace xenium { namespace reclamation {
   void generic_epoch_based<Traits>::guard_ptr<T, MarkedPtr>::reset() noexcept
   {
     if (this->ptr)
-      local_thread_data().leave_critical();
+      local_thread_data.leave_critical();
     this->ptr.reset();
   }
 
@@ -238,7 +244,7 @@ namespace xenium { namespace reclamation {
   void generic_epoch_based<Traits>::guard_ptr<T, MarkedPtr>::reclaim(Deleter d) noexcept
   {
     this->ptr->set_deleter(std::move(d));
-    local_thread_data().add_retired_node(this->ptr.get());
+    local_thread_data.add_retired_node(this->ptr.get());
     reset();
   }
 
@@ -269,6 +275,7 @@ namespace xenium { namespace reclamation {
 
       assert(control_block->is_in_critical_region.load(std::memory_order_relaxed) == false);
       global_thread_block_list.release_entry(control_block);
+      control_block = nullptr;
     }
 
     void enter_region()
@@ -306,11 +313,11 @@ namespace xenium { namespace reclamation {
   private:
     void ensure_has_control_block()
     {
-      if (BOOST_UNLIKELY(control_block == nullptr))
+      if (XENIUM_UNLIKELY(control_block == nullptr))
         acquire_control_block();
     }
 
-    BOOST_NOINLINE void acquire_control_block()
+    XENIUM_NOINLINE void acquire_control_block()
     {
       assert(control_block == nullptr);
       control_block = global_thread_block_list.acquire_entry();
@@ -325,7 +332,8 @@ namespace xenium { namespace reclamation {
     {
       assert(!control_block->is_in_critical_region.load(std::memory_order_relaxed));
       control_block->is_in_critical_region.store(true, std::memory_order_relaxed);
-      // (3) - this seq_cst-fence enforces a total order with itself
+      // (3) - this seq_cst-fence enforces a total order with itself, and 
+      //       synchronizes-with the acquire-fence (6)
       std::atomic_thread_fence(std::memory_order_seq_cst);
     }
 
@@ -382,10 +390,13 @@ namespace xenium { namespace reclamation {
 
       const auto old_epoch = control_block->local_epoch.load(std::memory_order_relaxed);
       assert(new_epoch > old_epoch);
-      control_block->local_epoch.store(new_epoch, std::memory_order_relaxed);
+      // TSan does not support explicit fences, so we cannot rely on the fences (3) and (6)
+      // but have to perform a release-store here to avoid false positives.
+      constexpr auto memory_order = TSAN_MEMORY_ORDER(std::memory_order_release, std::memory_order_relaxed);
+      control_block->local_epoch.store(new_epoch, memory_order);
 
-      auto diff = std::min<int>(number_epochs, new_epoch - old_epoch);
-      epoch_t epoch_idx;
+      auto diff = std::min<int>(static_cast<int>(number_epochs), static_cast<int>(new_epoch - old_epoch));
+      epoch_t epoch_idx = local_epoch_idx;
       for (int i = diff - 1; i >= 0; --i)
       {
         epoch_idx = (new_epoch - i) % number_epochs;
@@ -401,14 +412,15 @@ namespace xenium { namespace reclamation {
     {
       if (global_epoch.load(std::memory_order_relaxed) == curr_epoch)
       {
-        // (6) - this acquire-fence synchronizes-with the release-store (4)
+        // (6) - due to the load operations in scan, this acquire-fence synchronizes-with the release-store (4)
+        //       and the seq-cst fence (3)
         std::atomic_thread_fence(std::memory_order_acquire);
 
         // (7) - this release-CAS synchronizes-with the acquire-load (5)
         bool success = global_epoch.compare_exchange_strong(curr_epoch, new_epoch,
                                                             std::memory_order_release,
                                                             std::memory_order_relaxed);
-        if (BOOST_LIKELY(success))
+        if (XENIUM_LIKELY(success))
           reclaim_orphans(new_epoch);
       }
       return new_epoch;
@@ -429,43 +441,26 @@ namespace xenium { namespace reclamation {
     unsigned critical_entries_since_update = 0;
     unsigned nested_critical_entries = 0;
     unsigned region_entries = 0;
-    typename Traits::template scan_strategy<generic_epoch_based> scan_strategy;
+    typename Traits::scan_strategy::template type<generic_epoch_based> scan_strategy;
     thread_control_block* control_block = nullptr;
-    epoch_t local_epoch_idx;
+    epoch_t local_epoch_idx = 0;
     std::array<typename Traits::abandon_strategy::retire_list, number_epochs> retire_lists = {};
 
     friend class generic_epoch_based;
     ALLOCATION_COUNTER(generic_epoch_based);
   };
 
-  template <class Traits>
-  std::atomic<typename generic_epoch_based<Traits>::epoch_t> generic_epoch_based<Traits>::global_epoch;
-
-  template <class Traits>
-  detail::thread_block_list<typename generic_epoch_based<Traits>::thread_control_block>
-    generic_epoch_based<Traits>::global_thread_block_list;
-
-  template <class Traits>
-  std::array<detail::orphan_list<>, generic_epoch_based<Traits>::number_epochs>
-    generic_epoch_based<Traits>::orphans;
-
-  template <class Traits>
-  inline typename generic_epoch_based<Traits>::thread_data& generic_epoch_based<Traits>::local_thread_data()
-  {
-    static thread_local thread_data local_thread_data;
-    return local_thread_data;
-  }
-
-#ifdef TRACK_ALLOCATIONS
-  template <class Traits>
-  detail::allocation_tracker generic_epoch_based<Traits>::allocation_tracker;
-
+#ifdef TRACK_ALLOCATIONS 
   template <class Traits>
   inline void generic_epoch_based<Traits>::count_allocation()
-  { local_thread_data().allocation_counter.count_allocation(); }
+  { local_thread_data.allocation_counter.count_allocation(); }
 
   template <class Traits>
   inline void generic_epoch_based<Traits>::count_reclamation()
-  { local_thread_data().allocation_counter.count_reclamation(); }
+  { local_thread_data.allocation_counter.count_reclamation(); }
 #endif
 }}
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif

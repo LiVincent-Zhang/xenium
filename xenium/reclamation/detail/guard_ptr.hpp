@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -43,7 +43,7 @@ namespace xenium{ namespace reclamation { namespace detail {
     guard_ptr(const MarkedPtr& p = MarkedPtr{}) noexcept : ptr(p) {}
     MarkedPtr ptr;
 
-    void do_swap(Derived& g) noexcept {} // empty dummy
+    void do_swap(Derived&) noexcept {} // empty dummy
 
   private:
     Derived& self() { return static_cast<Derived&>(*this); }

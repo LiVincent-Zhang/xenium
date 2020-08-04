@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2018 Manuel Pöter.
+// Copyright (c) 2018-2020 Manuel Pöter.
 // Licensed under the MIT License. See LICENSE file in the project root for full license information.
 //
 
@@ -25,7 +25,7 @@ namespace xenium { namespace detail {
 
     constexpr bool can_grow() const { return false; }
 
-    void grow(std::size_t bottom, std::size_t top) {
+    void grow(std::size_t, std::size_t) {
       throw std::runtime_error("cannot grow fixed_size_circular_array");
     }
   private:
